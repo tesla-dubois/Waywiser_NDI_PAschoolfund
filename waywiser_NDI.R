@@ -1,5 +1,6 @@
 library(waywiser)
 library(dplyr)
+library(tidyr)
 library(sfdep)
 library(spdep)
 library(gridExtra)
@@ -27,11 +28,11 @@ tract2020PA <- tigris::tracts(state = "PA", year = 2020, cb = TRUE)
 PA2020messer <- merge(tract2020PA, PA2020messer$ndi, by = "GEOID")
 
 ###### PULL IN SCHOOL FUNDING 
-funding_df <- read.csv(paste0(path, "/PA_Education_Funding.csv")) |>
-  mutate(ï..AUN = as.character(as.numeric("ï..AUN")))
+funding <- read.csv(paste0(path, "/PA_Education_Funding.csv"))|>
+  mutate(sd_id = as.character(as.numeric(ï..AUN)))
 
 funding <- read_sf(paste0(path,"/Pennsylvania School Districts Boundaries/geo_export_e3be8142-14d4-4784-bc5d-d622f81ab614.shp"))|>
-  left_join(funding_df, by = c("school_dis"="School.District"))
+  left_join(funding, by = c("aun_schdis"="sd_id"))
 
 ######  GET THE DATASETS AT SAME GEOGRAPHY 
 st_crs(PA2020messer)
@@ -47,14 +48,14 @@ PA2020messer$centroid <- PA2020messer |>
 PA2020messer <- PA2020messer |>
   mutate(geometry = centroid) # Make the geometry field the centroid coordinates (instead of the polygon coordinates)
 
-
-NDI_by_district <- st_join(funding, PA2020messer) |> # Join the points of NDI to polygons of funding
+sf::sf_use_s2(FALSE)
+NDI_by_district <- st_join(funding, PA2020messer)|> # Join the points of NDI to polygons of funding
   group_by(school_dis)|>
   summarise(av_NDI = mean(NDI, na.rm = TRUE))|># get an average NDI per school district
-  st_drop_geometry() # drop geometry so we can use a left join to add back to funding 
+  st_drop_geometry()|> # drop geometry so we can use a left join to add back to funding 
+  drop_na()
 
 funding <- left_join(funding, NDI_by_district, by = "school_dis")
-colnames(funding)
 
 #### CHECK GLOBAL MORAN'S I FOR FUNDING
 nb <- poly2nb(funding, queen=TRUE, sf::sf_use_s2(FALSE))
@@ -84,28 +85,31 @@ moran.test(funding$av_NDI, lw, zero.policy = TRUE, na.action=na.exclude)
 
 ##################################
 # LINEAR REGRESSION 
+funding2 <- subset(funding, !is.na(av_NDI))|>
+  select("school_dis", "Percent.Change", "av_NDI", "geometry")
 
-funding <- funding %>% filter_at(vars(Percent.Change, av_NDI),all_vars(!is.na(.))) # Get rid of incomplete records (12)
+sapply(funding, function(x) sum(is.na(x)))
 
-model <- lm(Percent.Change ~ av_NDI, funding) # Here's our model
-funding$predictions <- predict(model, funding) # predicted values
+str(funding2)
+model <- lm(Percent.Change ~ av_NDI, funding2) # Here's our model
+funding2$predictions <- predict(model, funding2) # predicted values
 summary(model) # NDI is a significant predictor of funding change, effect is positive (that's good!) 
 
 
 # Get the global Moran's I of the residuals (they are significantly clustered)
-ww_global_moran(funding, Percent.Change, predictions)
+ww_global_moran(funding2, Percent.Change, predictions)
 
 
 # Get ready to map the residuals 
-weights <- ww_build_weights(funding)
-funding <- funding %>%
+weights <- ww_build_weights(funding2)
+funding2 <- funding2 %>%
   mutate(pred = predict(lm(Percent.Change ~ av_NDI, .)),
          .estimate = ww_local_moran_i_vec(Percent.Change, pred, weights))
-funding$pred
-funding$.estimate
+funding2$pred
+funding2$.estimate
 
 # Map out the model residuals 
-morans_map <- funding %>%
+morans_map <- funding2 %>%
   sf::st_as_sf() %>% 
   ggplot() +
   geom_sf(aes(fill = .estimate)
@@ -118,10 +122,10 @@ morans_map <- funding %>%
   theme(
     plot.title = element_text(size=12))#,
                    # subtitle = "Pennsylvania School Districts")
-
+morans_map
 # Map out the funding change 
 change_map <- ggplot2::ggplot() + 
-  ggplot2::geom_sf(data = funding, 
+  ggplot2::geom_sf(data = funding2, 
                    ggplot2::aes(fill = Percent.Change*100),
                    color = NA) +
   ggplot2::theme_bw() +  
@@ -132,10 +136,10 @@ change_map <- ggplot2::ggplot() +
   theme(
     plot.title = element_text(size=12))#,
                    # subtitle = "Pennsylvania School Districts")
-
+change_map
 # Map out the NDI 
 sd_ndi_map <- ggplot2::ggplot() + 
-  ggplot2::geom_sf(data = funding, 
+  ggplot2::geom_sf(data = funding2, 
                    ggplot2::aes(fill = av_NDI),
                    color = NA) +
   ggplot2::theme_bw() +  
@@ -146,7 +150,7 @@ sd_ndi_map <- ggplot2::ggplot() +
   theme(
     plot.title = element_text(size=12))#,
                    # subtitle = "Pennsylvania School Districts")
-
+sd_ndi_map
 # Put it all together 
 grid.arrange(sd_ndi_map, change_map, morans_map, 
              ncol = 1, nrow = 3,
