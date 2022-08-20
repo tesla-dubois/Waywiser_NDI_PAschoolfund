@@ -15,7 +15,7 @@ options(scipen=999)
 ## Access Key for census data download
 ### Obtain one at http://api.census.gov/data/key_signup.html
 # tidycensus::census_api_key("...") # INSERT YOUR OWN KEY FROM U.S. CENSUS API
-
+path <- "C:/GitHub/Waywiser_NDI_PAschoolfund"
 
 # Compute the NDI (Messer) values (2016-2020 5-year ACS) for Washington, D.C. census tracts
 PA2020messer <- ndi::messer(state = "PA", year = 2020)
@@ -27,10 +27,10 @@ tract2020PA <- tigris::tracts(state = "PA", year = 2020, cb = TRUE)
 PA2020messer <- merge(tract2020PA, PA2020messer$ndi, by = "GEOID")
 
 ###### PULL IN SCHOOL FUNDING 
-funding_df <- read.csv("C:/GitHub/Playing_around_w_new_Packages/Playing around/PA_Education_Funding.csv") |>
+funding_df <- read.csv(paste0(path, "/PA_Education_Funding.csv")) |>
   mutate(ï..AUN = as.character(as.numeric("ï..AUN")))
 
-funding <- read_sf("C:/GitHub/Playing_around_w_new_Packages/Playing around/Pennsylvania School Districts Boundaries/geo_export_e3be8142-14d4-4784-bc5d-d622f81ab614.shp")|>
+funding <- read_sf(paste0(path,"/Pennsylvania School Districts Boundaries/geo_export_e3be8142-14d4-4784-bc5d-d622f81ab614.shp"))|>
   left_join(funding_df, by = c("school_dis"="School.District"))
 
 ######  GET THE DATASETS AT SAME GEOGRAPHY 
@@ -53,11 +53,8 @@ NDI_by_district <- st_join(funding, PA2020messer) |> # Join the points of NDI to
   summarise(av_NDI = mean(NDI, na.rm = TRUE))|># get an average NDI per school district
   st_drop_geometry() # drop geometry so we can use a left join to add back to funding 
 
-
 funding <- left_join(funding, NDI_by_district, by = "school_dis")
 colnames(funding)
-
-
 
 #### CHECK GLOBAL MORAN'S I FOR FUNDING
 nb <- poly2nb(funding, queen=TRUE, sf::sf_use_s2(FALSE))
@@ -151,12 +148,6 @@ sd_ndi_map <- ggplot2::ggplot() +
                    # subtitle = "Pennsylvania School Districts")
 
 # Put it all together 
-grid.arrange(sd_ndi_map, change_map, morans_map, 
-                ncol = 1, nrow = 3,
-                heights = c(1, 1, 1),
-             top = textGrob(paste0("Pennsylvania School District \n 2020-2023 Funding Changes \n and Area Deprivation Index"),gp=gpar(fontsize=14,font=3)))
-
-# Here's another option without the text 
 grid.arrange(sd_ndi_map, change_map, morans_map, 
              ncol = 1, nrow = 3,
              heights = c(1, 1, 1))
